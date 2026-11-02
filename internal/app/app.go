@@ -39,12 +39,13 @@ type route struct {
 // app is the state both windows show. Everything in it is read and changed
 // on the main thread: by the views, and by goroutines through post.
 type app struct {
-	win   *mygo.Window
-	notch *notch
-	tray  *mygo.Tray // the icon in the menu bar or notification area, while it shows
-	art   *artCache
-	pl    *player.Player
-	pal   palette
+	win        *mygo.Window
+	notch      *notch
+	tray       *mygo.Tray // the icon in the menu bar or notification area, while it shows
+	lyricsTray *mygo.Tray // the current lyric left of the macOS menu bar icon
+	art        *artCache
+	pl         *player.Player
+	pal        palette
 
 	route   route
 	history []route
@@ -139,8 +140,10 @@ type app struct {
 
 	settings    settings
 	settingsWin *mygo.Window
-	cacheUsed   int64 // the bytes the song cache takes, -1 until measured
-	updates     bool  // the update plugin is used (useUpdater)
+	cacheUsed   int64  // the bytes the song cache takes, -1 until measured
+	updates     bool   // the update plugin is used (useUpdater)
+	lyricsGen   uint64 // drops stale menu bar lyric timers
+	menuLyrics  lyricMarquee
 
 	restored     bool   // playback picked up where it was left
 	savedSession string // the session as last kept
@@ -215,7 +218,9 @@ func Run() error {
 		a.pl.Changed = func() {
 			a.keepSession()
 			a.syncCaptions()
+			a.syncMenuBarLyrics()
 		}
+		a.pl.LyricsChanged = a.syncMenuBarLyrics
 		a.volume = a.settings.Volume
 		a.pl.SetVolume(a.volume)
 		a.win = mygo.NewWindow(mygo.WindowOptions{
@@ -282,6 +287,9 @@ func Run() error {
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
 		if a.tray != nil {
 			a.tray.Destroy()
+		}
+		if a.lyricsTray != nil {
+			a.lyricsTray.Destroy()
 		}
 	})
 	mygo.App.OnWindowAllClosed(func() {})

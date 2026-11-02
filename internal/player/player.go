@@ -35,6 +35,8 @@ type Player struct {
 	// Changed, if set, hears that what plays, where it is or whether it
 	// plays changed.
 	Changed func()
+	// LyricsChanged, if set, hears that the current track's lyrics loaded.
+	LyricsChanged func()
 
 	queue   []netease.Track
 	order   []int // the queue's indices in play order: shuffled or not
@@ -341,6 +343,13 @@ func (p *Player) Repeat() RepeatMode { return p.repeat }
 // Lyrics returns the current track's lyrics, and whether they have loaded.
 func (p *Player) Lyrics() ([]lyrics.Line, bool) { return p.lyrics, p.lyricsLoaded }
 
+func (p *Player) setLyrics(lines []lyrics.Line) {
+	p.lyrics, p.lyricsLoaded = lines, true
+	if p.LyricsChanged != nil {
+		p.LyricsChanged()
+	}
+}
+
 // Downloaded returns the share of the current track downloaded so far, or
 // false before it has started to.
 func (p *Player) Downloaded() (float64, bool) {
@@ -609,8 +618,7 @@ func (p *Player) loadSkipping(at, skipped int, play bool, from time.Duration) {
 		}
 		p.post(func() {
 			if gen == p.gen {
-				p.lyrics = lines
-				p.lyricsLoaded = true
+				p.setLyrics(lines)
 			}
 		})
 	}()

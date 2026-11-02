@@ -7,6 +7,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/lyrics"
 	"netease-music-mygo/internal/netease"
 	"netease-music-mygo/internal/player"
 )
@@ -38,12 +39,16 @@ type notch struct {
 
 	bars  barState
 	scrub scrubState
+
+	compactLyrics  lyricMarquee
+	expandedLyrics lyricMarquee
 }
 
 const (
 	notchOpenW  = 468
 	notchIdleW  = 330
 	notchHelloW = 340
+	notchLyricH = 26
 )
 
 func newNotch(a *app) *notch {
@@ -221,6 +226,14 @@ func (n *notch) keep() {
 func (n *notch) target() (w, h float32) {
 	tr := n.a.pl.Current()
 	s := n.a.settings
+	lyric := ""
+	if s.NotchLyrics {
+		lyric, _ = n.lyric()
+	}
+	lyricH := float32(0)
+	if n.real && !n.hello && lyric != "" {
+		lyricH = notchLyricH
+	}
 	switch {
 	case n.open && tr == nil:
 		return notchIdleW, n.h0 + 72
@@ -235,9 +248,9 @@ func (n *notch) target() (w, h float32) {
 	case tr != nil && s.NotchActivity && s.Notch:
 		// Wings just wide enough for the cover and the levels, so they
 		// hide no more of the menu bar than they must.
-		return n.w0 + 2*max(0, n.h0-12) + 20, n.h0
+		return n.w0 + 2*max(0, n.h0-12) + 20, n.h0 + lyricH
 	default:
-		return n.w0, n.h0
+		return n.w0, n.h0 + lyricH
 	}
 }
 
@@ -339,6 +352,16 @@ func (n *notch) view(c *ui.Context) {
 	a := n.a
 	pl := a.pl
 	tr := pl.Current()
+	lyric, lyricAfter := "", time.Duration(0)
+	if a.settings.NotchLyrics {
+		lyric, lyricAfter = n.lyric()
+	} else {
+		n.compactLyrics.reset()
+		n.expandedLyrics.reset()
+	}
+	if lyricAfter > 0 {
+		c.After(lyricAfter)
+	}
 	c.Root().Background(ui.Transparent)
 
 	tw, th := n.target()
@@ -380,9 +403,10 @@ func (n *notch) view(c *ui.Context) {
 			if a.settings.NotchActivity || !a.settings.Notch {
 				n.compact(c, tr, 1-open)
 			}
+			n.compactLyric(c, lyric, 1-open)
 			n.helloRow(c, hello*(1-open), (w-notchHelloW)/2)
 			if open > 0.02 {
-				n.expanded(c, tr, open, (w-notchOpenW)/2)
+				n.expanded(c, tr, lyric, open, (w-notchOpenW)/2)
 			}
 		})
 	})
@@ -408,6 +432,72 @@ func (n *notch) compact(c *ui.Context, tr *netease.Track, shown float32) {
 	})
 }
 
+// lyric returns the current lyric line and when the next one begins.
+func (n *notch) lyric() (string, time.Duration) {
+	pl := n.a.pl
+	lines, loaded := pl.Lyrics()
+	if !loaded || len(lines) == 0 {
+		return "", 0
+	}
+	pos := pl.Position()
+	cur := lyrics.Index(lines, pos)
+	var after time.Duration
+	if pl.Playing() && cur+1 < len(lines) {
+		after = lines[cur+1].At - pos + 20*time.Millisecond
+	}
+	if cur < 0 {
+		return "", after
+	}
+	return lines[cur].Text, after
+}
+
+// compactLyric puts the current line just below the compact housing.
+func (n *notch) compactLyric(c *ui.Context, lyric string, shown float32) {
+	if lyric == "" || shown < 0.02 || n.hello {
+		n.compactLyrics.reset()
+		return
+	}
+	top, height := n.h0, float32(notchLyricH)
+	if !n.real {
+		top, height = 0, n.h0
+	}
+	ui.Row(c).Absolute().Top(top).Left(0).Right(0).Height(height).PaddingX(10).AlignItems(ui.Center).
+		Justify(ui.Center).Opacity(shown).Children(func() {
+		n.lyricMarquee(c, &n.compactLyrics, lyric, n.compactLyricWidth()-20, 11.5, white.Alpha(0.78))
+	})
+}
+
+func (n *notch) compactLyricWidth() float32 {
+	w := n.w0
+	if n.real && n.a.settings.NotchActivity && n.a.settings.Notch {
+		w += 2*max(0, n.h0-12) + 20
+	}
+	return w
+}
+
+func (n *notch) lyricMarquee(c *ui.Context, marquee *lyricMarquee, lyric string, width, size float32, color ui.Color) {
+	textWidth, _ := c.MeasureText(0, ui.Span{Text: lyric, Size: size, Weight: 600})
+	overflow := textWidth > width
+	offset, after, moving := marquee.step(c.Now(), lyric, overflow, n.a.pl.Playing(), textWidth+lyricMarqueeGap, lyricMarqueeSpeed)
+	if after > 0 {
+		c.After(after)
+	}
+	if moving {
+		c.AnimationFrame()
+	}
+	viewport := ui.Box(c).Width(width).ClipX()
+	viewport.Children(func() {
+		if !overflow {
+			ui.Text(c, lyric).Width(width).FontSize(size).FontWeight(600).TextColor(color).TextAlign(ui.Center).SingleLine()
+			return
+		}
+		ui.Row(c).Gap(lyricMarqueeGap).Translate(-offset, 0).Children(func() {
+			ui.Text(c, lyric).FontSize(size).FontWeight(600).TextColor(color).SingleLine()
+			ui.Text(c, lyric).FontSize(size).FontWeight(600).TextColor(color).SingleLine()
+		})
+	})
+}
+
 // levels draws the music's levels in the cover's color.
 func (n *notch) levels(c *ui.Context, tr *netease.Track, w, h float32, count int) {
 	a := n.a
@@ -425,7 +515,7 @@ func (n *notch) levels(c *ui.Context, tr *netease.Track, w, h float32, count int
 	})
 }
 
-func (n *notch) expanded(c *ui.Context, tr *netease.Track, open, left float32) {
+func (n *notch) expanded(c *ui.Context, tr *netease.Track, lyric string, open, left float32) {
 	a := n.a
 	pl := a.pl
 	art := a.art.get(netease.Sized(tr.Album.PicURL, 200), false)
@@ -459,8 +549,14 @@ func (n *notch) expanded(c *ui.Context, tr *netease.Track, open, left float32) {
 				}
 			})
 			a.likeButton(c.Key("like"), tr, 17, white.Alpha(0.6))
+			n.lyricButton(c)
 			n.levels(c, tr, 26, 22, 5)
 		})
+		if lyric != "" {
+			n.lyricMarquee(c, &n.expandedLyrics, lyric, notchOpenW-44, 12, white.Alpha(0.72))
+		} else {
+			n.expandedLyrics.reset()
+		}
 		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, clock(pl.Position())).FontSize(10.5).FontFeatures("tnum").TextColor(white.Alpha(0.5)).Width(30)
 			a.scrubber(c.Key("notch-scrub"), &n.scrub, white.Alpha(0.18), white.Alpha(0.9), 14, ui.Color{}).Grow(1)
@@ -471,6 +567,24 @@ func (n *notch) expanded(c *ui.Context, tr *netease.Track, open, left float32) {
 		})
 	})
 }
+
+func (n *notch) lyricButton(c *ui.Context) {
+	a := n.a
+	color := white.Alpha(0.35)
+	if a.settings.NotchLyrics {
+		color = white.Alpha(0.8)
+	}
+	b := roundButton(c.Key("notch-lyrics"), 17, color, "切换刘海歌词")
+	b.Children(func() { ui.Text(c, "词").FontSize(12).FontWeight(700).TextColor(color) })
+	if b.Clicked() {
+		a.settings.NotchLyrics = !a.settings.NotchLyrics
+		applyNotchSettings(a)
+	}
+}
+
+// applyNotchSettings is replaceable because ui.NewTester has no native app
+// main loop for the appearance update in changed.
+var applyNotchSettings = func(a *app) { a.changed() }
 
 // helloRow says, under the housing, what the notch is, while it greets.
 func (n *notch) helloRow(c *ui.Context, shown, left float32) {

@@ -20,6 +20,11 @@ type settings struct {
 	// NotchVirtual keeps a notch of the app's own showing at the top of a
 	// display without one; else it shows only while the pointer asks.
 	NotchVirtual bool `json:"notchVirtual"`
+	// NotchLyrics shows the current lyric in the notch player.
+	NotchLyrics bool `json:"notchLyrics"`
+	// MenuBarLyrics shows the current lyric left of the app icon in the
+	// macOS menu bar.
+	MenuBarLyrics bool `json:"menuBarLyrics"`
 	// NotchGreeted says the notch showed itself, once, as the first song
 	// played (greet).
 	NotchGreeted bool `json:"notchGreeted"`
@@ -68,7 +73,7 @@ type settings struct {
 }
 
 func defaultSettings() settings {
-	return settings{NotchActivity: true, Quality: "exhigh", Appearance: "system", Volume: 0.8, Normalize: true, AppIcon: "dock-and-menubar", CacheMB: 2048, Captions: true}
+	return settings{NotchActivity: true, NotchLyrics: true, MenuBarLyrics: false, Quality: "exhigh", Appearance: "system", Volume: 0.8, Normalize: true, AppIcon: "dock-and-menubar", CacheMB: 2048, Captions: true}
 }
 
 func settingsPath() (string, error) {

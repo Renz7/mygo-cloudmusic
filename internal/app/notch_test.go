@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo/audio"
 	"github.com/egoist/mygo/ui"
 
+	"netease-music-mygo/internal/lyrics"
 	"netease-music-mygo/internal/netease"
 )
 
@@ -89,6 +90,90 @@ func TestNotchGreetingKeptUnderPointer(t *testing.T) {
 	}
 	if !a.settings.Notch || n.hello {
 		t.Fatalf("kept: notch %v, greeting %v", a.settings.Notch, n.hello)
+	}
+}
+
+// The notch shows its current lyric and hides it when its control is clicked.
+func TestNotchShowsCurrentLyric(t *testing.T) {
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.settings.Notch = true
+	n := &notch{a: a, real: true, w0: 185, h0: 32, winW: notchOpenW + 60, winH: 240}
+	a.notch = n
+	a.pl.Cue([]netease.Track{{ID: 7, Name: "宝船", Duration: 200000}})
+	a.pl.SetLyrics([]lyrics.Line{
+		{At: time.Second, End: 2 * time.Second, Text: "第一句"},
+		{At: 2 * time.Second, End: 3 * time.Second, Text: "第二句"},
+	})
+	a.pl.Hold(time.Second)
+
+	if _, h := n.target(); h != n.h0+notchLyricH {
+		t.Fatalf("compact height %v, want %v", h, n.h0+notchLyricH)
+	}
+	tt := ui.NewTester(n.view, int(n.winW), int(n.winH))
+	tt.Frame()
+	tt.Advance(time.Second)
+	tt.Frame()
+	if !tt.HasText("第一句") {
+		t.Fatal("did not show the compact lyric")
+	}
+
+	n.open = true
+	tt.Frame()
+	tt.Advance(time.Second)
+	tt.Frame()
+	a.pl.Hold(2 * time.Second)
+	tt.Frame()
+	if !tt.HasText("第二句") || tt.HasText("第一句") {
+		t.Fatal("did not update the expanded lyric")
+	}
+
+	defer func(apply func(*app)) { applyNotchSettings = apply }(applyNotchSettings)
+	applyNotchSettings = func(*app) {}
+	if err := tt.Click("切换刘海歌词"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.settings.NotchLyrics || tt.HasText("第二句") {
+		t.Fatal("showed lyrics after menu bar lyrics were disabled")
+	}
+
+	a.settings.NotchLyrics = true
+	a.pl.SetLyrics(nil)
+	n.open = false
+	tt.Frame()
+	if _, h := n.target(); h != n.h0 {
+		t.Fatalf("compact height without lyrics %v, want %v", h, n.h0)
+	}
+	if tt.HasText("第二句") {
+		t.Fatal("showed a lyric after lyrics were removed")
+	}
+}
+
+// A virtual notch keeps its lyric centered in the housing, not below it.
+func TestNotchCentersLyricsWithoutPhysicalNotch(t *testing.T) {
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.settings.Notch, a.settings.NotchVirtual = true, true
+	n := &notch{a: a, h0: 32, w0: 200, winW: notchOpenW + 60, winH: 240}
+	a.notch = n
+	a.pl.Cue([]netease.Track{{ID: 7, Name: "宝船", Duration: 200000}})
+	a.pl.SetLyrics([]lyrics.Line{{At: time.Second, End: 2 * time.Second, Text: "第一句"}})
+	a.pl.Hold(time.Second)
+
+	if _, h := n.target(); h != n.h0 {
+		t.Fatalf("virtual notch height %v, want %v", h, n.h0)
+	}
+	tt := ui.NewTester(n.view, int(n.winW), int(n.winH))
+	tt.Frame()
+	tt.Advance(time.Second)
+	tt.Frame()
+	r, ok := tt.Find("第一句")
+	if !ok {
+		t.Fatal("did not show the virtual notch lyric")
+	}
+	if r.Y < 0 || r.Y+r.H > n.h0 {
+		t.Fatalf("virtual notch lyric bounds %v, outside height %v", r, n.h0)
 	}
 }
 

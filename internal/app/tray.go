@@ -4,8 +4,11 @@ import (
 	_ "embed"
 	"log"
 	"runtime"
+	"time"
 
 	"github.com/egoist/mygo"
+
+	"netease-music-mygo/internal/lyrics"
 )
 
 // The app's icon in the menu bar on macOS, as the settings choose
@@ -94,6 +97,79 @@ func (a *app) applyTray() {
 		a.tray.Destroy()
 		a.tray = nil
 	}
+	a.syncMenuBarLyrics()
+}
+
+const menuBarLyricRunes = 24
+
+// syncMenuBarLyrics keeps the current lyric in its own status item, created
+// after the app's one so it sits to that icon's left.
+func (a *app) syncMenuBarLyrics() {
+	a.lyricsGen++
+	gen := a.lyricsGen
+	if runtime.GOOS != "darwin" || !a.settings.MenuBarLyrics || a.tray == nil {
+		a.menuLyrics.reset()
+		if a.lyricsTray != nil {
+			a.lyricsTray.Destroy()
+			a.lyricsTray = nil
+		}
+		return
+	}
+
+	text, lyricAfter := a.menuBarLyric()
+	title, marqueeAfter := a.menuLyrics.menuBarLyricTitle(time.Now(), text, a.pl.Playing())
+	after := soonestAfter(lyricAfter, marqueeAfter)
+	if a.lyricsTray == nil {
+		t, err := mygo.NewTray(mygo.TrayOptions{
+			ID:      "cloudmusic-lyrics",
+			Title:   title,
+			ToolTip: text,
+			Menu:    a.trayMenu(),
+		})
+		if err != nil {
+			log.Println("menu bar lyrics:", err)
+			return
+		}
+		a.lyricsTray = t
+	} else {
+		a.lyricsTray.SetTitle(title)
+		a.lyricsTray.SetToolTip(text)
+	}
+	if after > 0 {
+		time.AfterFunc(after, func() {
+			mygo.RunOnMain(func() {
+				if a.lyricsGen == gen {
+					a.syncMenuBarLyrics()
+				}
+			})
+		})
+	}
+}
+
+// menuBarLyric returns the status item's full text and when its next line
+// begins, if the player is moving.
+func (a *app) menuBarLyric() (string, time.Duration) {
+	pl := a.pl
+	if pl.Current() == nil {
+		return "未在播放", 0
+	}
+	lines, loaded := pl.Lyrics()
+	if !loaded {
+		return "正在加载歌词…", 0
+	}
+	if len(lines) == 0 {
+		return "暂无歌词", 0
+	}
+	pos := pl.Position()
+	cur := lyrics.Index(lines, pos)
+	var after time.Duration
+	if pl.Playing() && cur+1 < len(lines) {
+		after = lines[cur+1].At - pos + 20*time.Millisecond
+	}
+	if cur < 0 || lines[cur].Text == "" {
+		return "暂无歌词", after
+	}
+	return lines[cur].Text, after
 }
 
 // trayMenu is the icon's menu: the window, the player's controls,

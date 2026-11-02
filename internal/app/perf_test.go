@@ -82,6 +82,25 @@ func TestNowPlayingFrameBudget(t *testing.T) {
 	}
 }
 
+// A short lyric in the notch does not keep asking for animation frames.
+func TestNotchLyricFrameBudget(t *testing.T) {
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.settings.Notch = true
+	n := &notch{a: a, real: true, w0: 185, h0: 32, winW: notchOpenW + 60, winH: 240}
+	a.notch = n
+	a.pl.Cue([]netease.Track{{ID: 7, Name: "宝船", Duration: 200000}})
+	a.pl.SetLyrics([]lyrics.Line{{Text: "短句"}})
+	a.pl.Hold(0)
+	tt := ui.NewTester(n.view, int(n.winW), int(n.winH))
+	tt.Frame()
+	tt.Advance(time.Second)
+	tt.Frame()
+	if tt.FramePending() {
+		t.Fatal("a short notch lyric requested animation frames")
+	}
+}
+
 // Another song's backdrop fades in over the last one's, which is then let
 // go, so that the backdrop stops asking for frames.
 func TestBackdropFadeEnds(t *testing.T) {

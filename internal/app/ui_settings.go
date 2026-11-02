@@ -46,6 +46,7 @@ func (a *app) changed() {
 	if a.notch != nil {
 		a.notch.setEnabled(a.settings.Notch)
 	}
+	a.syncMenuBarLyrics()
 	a.redraw()
 }
 
@@ -98,6 +99,11 @@ func (a *app) settingsView(c *ui.Context) {
 						a.changeAppIcon()
 					}
 				})
+				row("菜单栏歌词", "在应用菜单栏图标左侧显示当前歌词", func() {
+					if ui.Switch(c.Key("menu-bar-lyrics"), &s.MenuBarLyrics).Label("菜单栏歌词").Changed() {
+						a.changed()
+					}
+				})
 			})
 		}
 
@@ -116,6 +122,11 @@ func (a *app) settingsView(c *ui.Context) {
 				})
 				row("在无刘海的屏幕上常驻显示", "关闭时，将鼠标移至屏幕顶部中央即可唤出，不会遮挡菜单栏", func() {
 					if ui.Switch(c.Key("virtual"), &s.NotchVirtual).Label("在无刘海的屏幕上常驻显示").Disabled(!s.Notch).Changed() {
+						a.changed()
+					}
+				})
+				row("刘海歌词", "显示当前歌词；无刘海屏幕时显示在虚拟刘海中间", func() {
+					if ui.Switch(c.Key("notch-lyrics"), &s.NotchLyrics).Label("刘海歌词").Disabled(!s.Notch).Changed() {
 						a.changed()
 					}
 				})
