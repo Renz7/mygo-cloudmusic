@@ -85,10 +85,7 @@ func (m *lyricMarquee) menuBarLyricTitle(now time.Time, text string, playing boo
 }
 
 func padMenuBarLyric(runes []rune) string {
-	for len(runes) < menuBarLyricRunes {
-		runes = append(runes, '\u2007')
-	}
-	return string(runes)
+	return strings.Repeat("\u2007", menuBarLyricRunes-len(runes)) + string(runes)
 }
 
 func soonestAfter(a, b time.Duration) time.Duration {

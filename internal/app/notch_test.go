@@ -177,6 +177,43 @@ func TestNotchCentersLyricsWithoutPhysicalNotch(t *testing.T) {
 	}
 }
 
+// The notch queue changes tracks only when a queue entry is double-clicked.
+func TestNotchQueueDoubleClickChangesTrack(t *testing.T) {
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.settings.Notch = true
+	n := &notch{a: a, real: true, w0: 185, h0: 32, winW: notchOpenW + 60, winH: notchQueueH + 64, open: true}
+	a.notch = n
+	a.pl.Cue([]netease.Track{
+		{ID: 7, Name: "第一首", Duration: 200000},
+		{ID: 8, Name: "下一首", Duration: 200000},
+	})
+
+	tt := ui.NewTester(n.view, int(n.winW), int(n.winH))
+	tt.Advance(time.Second)
+	tt.Frame()
+	if err := tt.Click("打开播放队列"); err != nil {
+		t.Fatal(err)
+	}
+	if !n.queueOpen {
+		t.Fatal("did not open the queue")
+	}
+	tt.Advance(time.Second)
+	tt.Frame()
+	if err := tt.Click("下一首"); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.pl.Current(); got == nil || got.ID != 7 {
+		t.Fatalf("single click changed to %#v", got)
+	}
+	if err := tt.Click("下一首"); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.pl.Current(); got == nil || got.ID != 8 {
+		t.Fatalf("double click changed to %#v, want track 8", got)
+	}
+}
+
 // With NM_FRAMES set, saves the notch as it greets, growing and grown, and
 // the player bar holding a song a login picked up.
 func TestFirstUseFrames(t *testing.T) {

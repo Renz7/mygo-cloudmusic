@@ -54,3 +54,14 @@ func TestMenuBarLyricMarquee(t *testing.T) {
 		t.Fatal("menu bar lyric did not scroll")
 	}
 }
+
+// A short menu bar lyric is right-aligned against the app's tray icon.
+func TestMenuBarLyricRightAlignment(t *testing.T) {
+	var m lyricMarquee
+	text := "短歌词"
+	got, _ := m.menuBarLyricTitle(time.Unix(0, 0), text, true)
+	want := strings.Repeat("\u2007", menuBarLyricRunes-len([]rune(text))) + text
+	if got != want {
+		t.Fatalf("title %q, want %q", got, want)
+	}
+}

@@ -42,6 +42,8 @@ type notch struct {
 
 	compactLyrics  lyricMarquee
 	expandedLyrics lyricMarquee
+	queueOpen      bool
+	queueList      ui.ListState
 }
 
 const (
@@ -49,12 +51,13 @@ const (
 	notchIdleW  = 330
 	notchHelloW = 340
 	notchLyricH = 26
+	notchQueueH = 310
 )
 
 func newNotch(a *app) *notch {
 	n := &notch{a: a}
 	n.measure()
-	n.winW, n.winH = notchOpenW+60, 240
+	n.winW, n.winH = notchOpenW+60, notchQueueH+64
 	n.place()
 	n.win = mygo.NewWindow(mygo.WindowOptions{
 		Title:         mygo.App.Name() + "迷你播放器",
@@ -152,7 +155,7 @@ func (n *notch) setEnabled(on bool) {
 		n.poll()
 		return
 	}
-	n.open, n.hello = false, false
+	n.open, n.hello, n.queueOpen = false, false, false
 	n.win.Hide()
 	n.watch()
 }
@@ -237,6 +240,8 @@ func (n *notch) target() (w, h float32) {
 	switch {
 	case n.open && tr == nil:
 		return notchIdleW, n.h0 + 72
+	case n.open && n.queueOpen:
+		return notchOpenW, n.h0 + notchQueueH
 	case n.open:
 		return notchOpenW, n.h0 + 178
 	case n.hello && tr != nil:
@@ -289,7 +294,7 @@ func (n *notch) poll() {
 			n.open, changed = true, true
 		}
 	} else if n.open && now.Sub(n.lastInside) > 300*time.Millisecond {
-		n.open, changed = false, true
+		n.open, n.queueOpen, changed = false, false, true
 	}
 	pass := !inside
 	if n.win == nil {
@@ -518,6 +523,10 @@ func (n *notch) levels(c *ui.Context, tr *netease.Track, w, h float32, count int
 func (n *notch) expanded(c *ui.Context, tr *netease.Track, lyric string, open, left float32) {
 	a := n.a
 	pl := a.pl
+	if n.queueOpen {
+		n.queue(c, open, left)
+		return
+	}
 	art := a.art.get(netease.Sized(tr.Album.PicURL, 200), false)
 	a.tickTimes(c)
 	col := ui.Column(c).Absolute().Top(n.h0+6).Left(left).Width(notchOpenW).Padding(8, 22, 16, 22).Gap(12).Opacity(max(0, open*1.4-0.4))
@@ -550,6 +559,7 @@ func (n *notch) expanded(c *ui.Context, tr *netease.Track, lyric string, open, l
 			})
 			a.likeButton(c.Key("like"), tr, 17, white.Alpha(0.6))
 			n.lyricButton(c)
+			n.queueButton(c)
 			n.levels(c, tr, 26, 22, 5)
 		})
 		if lyric != "" {
@@ -568,6 +578,62 @@ func (n *notch) expanded(c *ui.Context, tr *netease.Track, lyric string, open, l
 	})
 }
 
+// queue shows the current play order and lets a listener switch by double
+// clicking a track.
+func (n *notch) queue(c *ui.Context, open, left float32) {
+	pl := n.a.pl
+	order, at := pl.PlayOrder()
+	col := ui.Column(c).Absolute().Top(n.h0+6).Left(left).Width(notchOpenW).Height(notchQueueH-6).
+		Padding(8, 22, 16, 22).Gap(10).Opacity(max(0, open*1.4-0.4))
+	col.Translate(0, (1-open)*-10)
+	col.Children(func() {
+		ui.Row(c).Height(24).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "当前播放队列").FontSize(15).FontWeight(700)
+			ui.Spacer(c)
+			back := roundButton(c.Key("notch-queue-back"), 16, white.Alpha(0.65), "返回播放控制")
+			back.Children(func() { ui.Text(c, "返回").FontSize(10.5).FontWeight(600).TextColor(white.Alpha(0.8)) })
+			if back.Clicked() {
+				n.queueOpen = false
+			}
+		})
+		if len(order) == 0 {
+			ui.Box(c).Grow(1).Center().Children(func() {
+				ui.Text(c, "播放队列为空").FontSize(13).TextColor(white.Alpha(0.55))
+			})
+			return
+		}
+		n.queueList.Key = func(row int) any { return order[row] }
+		ui.List(c.Key("notch-queue"), &n.queueList, len(order), func(r int) {
+			i := order[r]
+			tr := &pl.Queue()[i]
+			playing := r == at
+			row := ui.ButtonBase(c.Key(i)).Row().Height(46).PaddingX(10).Gap(10).Radius(9).AlignItems(ui.Center).FocusRing(false).Label(tr.Name)
+			switch {
+			case playing:
+				row.Background(white.Alpha(0.14))
+			case row.Hovered():
+				row.Background(white.Alpha(0.08))
+			}
+			if !tr.Playable() {
+				row.Opacity(0.4)
+			}
+			row.Children(func() {
+				ui.Box(c).Width(18).Center().Children(func() {
+					ui.Textf(c, "%d", r+1).FontSize(11).FontWeight(600).FontFeatures("tnum").TextColor(white.Alpha(0.5))
+				})
+				ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+					ui.Text(c, tr.Name).FontSize(13).FontWeight(600).SingleLine()
+					ui.Text(c, tr.ArtistNames()).FontSize(11).TextColor(white.Alpha(0.55)).SingleLine()
+				})
+				ui.Text(c, clock(tr.Length())).FontSize(11).FontFeatures("tnum").TextColor(white.Alpha(0.45))
+			})
+			if row.DoubleClicked() && tr.Playable() && !playing {
+				pl.Jump(i)
+			}
+		}).Grow(1)
+	})
+}
+
 func (n *notch) lyricButton(c *ui.Context) {
 	a := n.a
 	color := white.Alpha(0.35)
@@ -575,10 +641,19 @@ func (n *notch) lyricButton(c *ui.Context) {
 		color = white.Alpha(0.8)
 	}
 	b := roundButton(c.Key("notch-lyrics"), 17, color, "切换刘海歌词")
-	b.Children(func() { ui.Text(c, "词").FontSize(12).FontWeight(700).TextColor(color) })
+	b.Children(func() { ui.Icon(c, iconLyrics).Size(16, 16).TextColor(color) })
 	if b.Clicked() {
 		a.settings.NotchLyrics = !a.settings.NotchLyrics
 		applyNotchSettings(a)
+	}
+}
+
+func (n *notch) queueButton(c *ui.Context) {
+	color := white.Alpha(0.65)
+	b := roundButton(c.Key("notch-queue"), 17, color, "打开播放队列")
+	b.Children(func() { ui.Icon(c, iconQueue).Size(16, 16).TextColor(color) })
+	if b.Clicked() {
+		n.queueOpen = true
 	}
 }
 
