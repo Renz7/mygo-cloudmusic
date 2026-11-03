@@ -49,11 +49,12 @@ type notch struct {
 }
 
 const (
-	notchOpenW  = 468
-	notchIdleW  = 330
-	notchHelloW = 340
-	notchLyricH = 26
-	notchQueueH = 310
+	notchOpenW          = 468
+	notchIdleW          = 330
+	notchHelloW         = 340
+	notchLyricH         = 26
+	notchQueueH         = 310
+	notchExpandedLyricH = 14
 )
 
 func newNotch(a *app) *notch {
@@ -654,8 +655,14 @@ func (n *notch) expanded(c *ui.Context, tr *netease.Track, lyric string, open, l
 			n.queueButton(c)
 			n.levels(c, tr, 26, 22, 5)
 		})
-		if lyric != "" {
-			n.lyricMarquee(c, &n.expandedLyrics, lyric, notchOpenW-44, 12, white.Alpha(0.72))
+		if a.settings.NotchLyrics {
+			ui.Box(c).Height(notchExpandedLyricH).Children(func() {
+				if lyric != "" {
+					n.lyricMarquee(c, &n.expandedLyrics, lyric, notchOpenW-44, 12, white.Alpha(0.72))
+					return
+				}
+				n.expandedLyrics.reset()
+			})
 		} else {
 			n.expandedLyrics.reset()
 		}

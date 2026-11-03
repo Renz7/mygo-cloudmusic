@@ -214,6 +214,46 @@ func TestNotchQueueDoubleClickChangesTrack(t *testing.T) {
 	}
 }
 
+// An expanded notch keeps its controls in place when its enabled lyrics disappear.
+func TestNotchKeepsExpandedLyricSlot(t *testing.T) {
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.settings.Notch = true
+	n := &notch{a: a, real: true, w0: 185, h0: 32, winW: notchOpenW + 60, winH: notchQueueH + 64, open: true}
+	a.notch = n
+	a.pl.Cue([]netease.Track{{ID: 7, Name: "宝船", Duration: 200000}})
+	a.pl.SetLyrics([]lyrics.Line{{At: time.Second, End: 2 * time.Second, Text: "第一句"}})
+	a.pl.Hold(time.Second)
+
+	tt := ui.NewTester(n.view, int(n.winW), int(n.winH))
+	tt.Advance(time.Second)
+	tt.Frame()
+	withLyrics, ok := tt.Find("播放进度")
+	if !ok {
+		t.Fatal("did not find the expanded scrubber")
+	}
+
+	a.pl.SetLyrics(nil)
+	tt.Frame()
+	withoutLyrics, ok := tt.Find("播放进度")
+	if !ok {
+		t.Fatal("did not find the scrubber without lyrics")
+	}
+	if withoutLyrics.Y != withLyrics.Y {
+		t.Fatalf("scrubber moved from %v to %v without lyrics", withLyrics.Y, withoutLyrics.Y)
+	}
+
+	a.settings.NotchLyrics = false
+	tt.Frame()
+	withoutSlot, ok := tt.Find("播放进度")
+	if !ok {
+		t.Fatal("did not find the scrubber with lyrics disabled")
+	}
+	if withoutSlot.Y >= withoutLyrics.Y {
+		t.Fatalf("scrubber stayed at %v after lyrics were disabled, want above %v", withoutSlot.Y, withoutLyrics.Y)
+	}
+}
+
 // Dragging the compact notch snaps it to the display under the pointer.
 func TestNotchDragSnapsToDisplay(t *testing.T) {
 	displays := notchDisplays
