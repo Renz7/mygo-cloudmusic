@@ -24,11 +24,13 @@ type notch struct {
 	w0, h0     float32 // the housing's size
 	real       bool    // the display has one: else the notch hides until wanted
 	winW, winH float32
+	displayID  int64   // the display it follows this run
 	screenX    float32 // the window's left on the screen
 	screenY    float32
 
 	open       bool // the pointer is over it: it shows the player
 	hello      bool // it shows itself, turned off, with a way to keep it
+	dragging   bool // the compact housing moves the native window
 	enteredAt  time.Time
 	lastInside time.Time
 	passing    bool   // clicks pass through to what is under the window
@@ -84,12 +86,12 @@ func newNotch(a *app) *notch {
 	n.passing = true
 	if a.settings.Notch {
 		n.win.ShowInactive()
-		pinToTop(n.win.NativeHandle(), float64(n.winW), float64(n.winH))
+		n.pin()
 	}
 	mygo.Screen.OnDisplaysChanged(func() {
 		n.measure()
 		n.place()
-		pinToTop(n.win.NativeHandle(), float64(n.winW), float64(n.winH))
+		n.pin()
 	})
 	// The pointer's moves wake the notch: it polls only while one may
 	// soon open or close it, and costs nothing at rest.
@@ -108,19 +110,20 @@ func (n *notch) watch() {
 	on := n.a.settings.Notch || n.hello
 	switch {
 	case on && n.unwatch == nil:
-		n.unwatch, n.watched = watchPointer(n.poll)
+		n.unwatch, n.watched = watchPointer(n.poll, n.dragStarted, n.dragEnded)
 	case !on && n.unwatch != nil:
 		n.unwatch()
 		n.unwatch, n.watched = nil, false
 	}
 }
 
-// measure finds the housing of the display with the menu bar.
+// measure finds the housing of the display the notch follows.
 func (n *notch) measure() {
 	n.w0, n.h0, n.real = 200, 32, false
-	if w, h, ok := notchSize(); ok {
+	_, screen := n.display()
+	if w, h, ok := notchSize(screen); ok {
 		n.w0, n.h0, n.real = float32(w), float32(h), true
-	} else if h := menuBarHeight(); h > 0 {
+	} else if h := menuBarHeight(screen); h > 0 {
 		// A notch of its own, as high as the menu bar it hangs over.
 		n.h0 = float32(h)
 	}
@@ -129,12 +132,43 @@ func (n *notch) measure() {
 	}
 }
 
-// place centers the window at the top of the display with the menu bar,
-// where the pointer finds it.
+// place centers the window at the top of the display the notch follows.
 func (n *notch) place() {
-	d := mygo.Screen.PrimaryDisplay()
+	d, _ := n.display()
 	n.screenX = float32(d.Bounds.X) + (float32(d.Bounds.Width)-n.winW)/2
 	n.screenY = float32(d.Bounds.Y)
+}
+
+// display returns the notch's current display, falling back to the primary
+// one if it was disconnected.
+func (n *notch) display() (mygo.Display, int) {
+	displays := notchDisplays()
+	for i, d := range displays {
+		if d.ID == n.displayID {
+			return d, i
+		}
+	}
+	if len(displays) > 0 {
+		n.displayID = displays[0].ID
+		return displays[0], 0
+	}
+	return mygo.Display{}, -1
+}
+
+// moveToDisplay measures and pins the notch to d.
+func (n *notch) moveToDisplay(d mygo.Display) {
+	n.displayID = d.ID
+	n.measure()
+	n.place()
+	n.pin()
+}
+
+func (n *notch) pin() {
+	if n.win == nil {
+		return
+	}
+	_, screen := n.display()
+	pinToTop(n.win.NativeHandle(), screen, float64(n.winW), float64(n.winH))
 }
 
 // setEnabled shows the notch player, or hides it for good, as the
@@ -150,7 +184,8 @@ func (n *notch) setEnabled(on bool) {
 	}
 	if on {
 		n.win.ShowInactive()
-		pinToTop(n.win.NativeHandle(), float64(n.winW), float64(n.winH))
+		n.place()
+		n.pin()
 		n.watch()
 		n.poll()
 		return
@@ -175,7 +210,8 @@ func (n *notch) greet() {
 		return // as in tests
 	}
 	n.win.ShowInactive()
-	pinToTop(n.win.NativeHandle(), float64(n.winW), float64(n.winH))
+	n.place()
+	n.pin()
 	n.watch()
 	n.poll()
 	n.byeSoon(7 * time.Second)
@@ -262,10 +298,63 @@ func (n *notch) target() (w, h float32) {
 // cursorPoint is where the pointer is on the screen.
 var cursorPoint = func() mygo.Point { return mygo.Screen.CursorScreenPoint() }
 
+var notchDisplays = func() []mygo.Display { return mygo.Screen.Displays() }
+
+func displayAtPoint(p mygo.Point) (mygo.Display, bool) {
+	for _, d := range notchDisplays() {
+		b := d.Bounds
+		if p.X >= b.X && p.X < b.X+b.Width && p.Y >= b.Y && p.Y < b.Y+b.Height {
+			return d, true
+		}
+	}
+	return mygo.Display{}, false
+}
+
+// dragStarted starts a native window drag only from the compact housing.
+func (n *notch) dragStarted() {
+	n.dragStartedAt(cursorPoint())
+}
+
+func (n *notch) dragStartedAt(p mygo.Point) {
+	if n.hello {
+		return
+	}
+	w, _ := n.target()
+	if float32(p.X) < n.screenX+(n.winW-w)/2 || float32(p.X) > n.screenX+(n.winW+w)/2 ||
+		float32(p.Y) < n.screenY || float32(p.Y) > n.screenY+n.h0 {
+		return
+	}
+	n.dragging = true
+}
+
+// dragEnded snaps a completed native drag to the display under the pointer.
+func (n *notch) dragEnded() {
+	n.dragEndedAt(cursorPoint())
+}
+
+func (n *notch) dragEndedAt(p mygo.Point) {
+	if !n.dragging {
+		return
+	}
+	n.dragging = false
+	if d, ok := displayAtPoint(p); ok {
+		n.moveToDisplay(d)
+	}
+	if n.win != nil {
+		n.poll()
+	}
+}
+
 // poll follows the pointer, which the window cannot always see: it lets
 // clicks through where it draws nothing, and opens while over it.
 func (n *notch) poll() {
 	if !n.a.settings.Notch && !n.hello {
+		return
+	}
+	if n.dragging {
+		n.lastInside = time.Now()
+		n.passing = false
+		n.pollAgain(true)
 		return
 	}
 	pt := cursorPoint()
@@ -401,6 +490,9 @@ func (n *notch) view(c *ui.Context) {
 	stage.Children(func() {
 		body := ui.Box(c).Absolute().Top(0).Left(cx-w/2).Size(w, h).Radius(0, 0, foot, foot).Clip().TextColor(white)
 		body.Children(func() {
+			if !n.hello {
+				ui.Box(c).Absolute().Top(0).Left(0).Right(0).Height(n.h0).DragWindow()
+			}
 			if tr == nil {
 				n.idle(c, open, (w-notchIdleW)/2)
 				return

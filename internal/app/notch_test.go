@@ -214,6 +214,60 @@ func TestNotchQueueDoubleClickChangesTrack(t *testing.T) {
 	}
 }
 
+// Dragging the compact notch snaps it to the display under the pointer.
+func TestNotchDragSnapsToDisplay(t *testing.T) {
+	displays := notchDisplays
+	defer func() { notchDisplays = displays }()
+	notchDisplays = func() []mygo.Display {
+		return []mygo.Display{
+			{ID: 1, Bounds: mygo.Rectangle{X: 0, Y: 0, Width: 1000, Height: 800}},
+			{ID: 2, Bounds: mygo.Rectangle{X: 1000, Y: 20, Width: 1200, Height: 900}},
+		}
+	}
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.settings.Notch = true
+	n := &notch{a: a, real: true, w0: 200, h0: 32, winW: notchOpenW + 60, winH: notchQueueH + 64, displayID: 1}
+	n.place()
+
+	n.dragStartedAt(mygo.Point{X: int(n.screenX + n.winW/2), Y: int(n.screenY + n.h0/2)})
+	if !n.dragging {
+		t.Fatal("did not start dragging the compact notch")
+	}
+	n.dragEndedAt(mygo.Point{X: 1600, Y: 100})
+	if n.dragging || n.displayID != 2 {
+		t.Fatalf("dragging %v, display %d, want display 2", n.dragging, n.displayID)
+	}
+	if want := float32(1000 + (1200-int(n.winW))/2); n.screenX != want || n.screenY != 20 {
+		t.Fatalf("placed at %v,%v, want %v,20", n.screenX, n.screenY, want)
+	}
+}
+
+// A drag outside the compact housing or every display leaves the notch where it was.
+func TestNotchDragKeepsDisplayWithoutTarget(t *testing.T) {
+	displays := notchDisplays
+	defer func() { notchDisplays = displays }()
+	notchDisplays = func() []mygo.Display {
+		return []mygo.Display{{ID: 1, Bounds: mygo.Rectangle{X: 0, Y: 0, Width: 1000, Height: 800}}}
+	}
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.settings.Notch = true
+	n := &notch{a: a, real: true, w0: 200, h0: 32, winW: notchOpenW + 60, winH: notchQueueH + 64, displayID: 1}
+	n.place()
+	x, y := n.screenX, n.screenY
+
+	n.dragStartedAt(mygo.Point{X: int(x + n.winW/2), Y: int(y + n.h0 + 1)})
+	if n.dragging {
+		t.Fatal("started dragging below the compact housing")
+	}
+	n.dragStartedAt(mygo.Point{X: int(x + n.winW/2), Y: int(y + n.h0/2)})
+	n.dragEndedAt(mygo.Point{X: 1200, Y: 100})
+	if n.displayID != 1 || n.screenX != x || n.screenY != y {
+		t.Fatalf("moved to display %d at %v,%v", n.displayID, n.screenX, n.screenY)
+	}
+}
+
 // With NM_FRAMES set, saves the notch as it greets, growing and grown, and
 // the player bar holding a song a login picked up.
 func TestFirstUseFrames(t *testing.T) {

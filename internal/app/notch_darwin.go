@@ -12,10 +12,10 @@ type nsRect struct {
 }
 type nsEdgeInsets struct{ Top, Left, Bottom, Right float64 }
 
-// notchSize returns the size of the camera housing of the display with the
-// menu bar in points, or false if it has none.
-func notchSize() (w, h float64, ok bool) {
-	s := menuBarScreen()
+// notchSize returns the size of screen's camera housing in points, or false
+// if it has none.
+func notchSize(screen int) (w, h float64, ok bool) {
+	s := menuBarScreen(screen)
 	if s == 0 || !objc.Send[bool](s, objc.RegisterName("respondsToSelector:"), objc.RegisterName("safeAreaInsets")) {
 		return 0, 0, false
 	}
@@ -29,9 +29,9 @@ func notchSize() (w, h float64, ok bool) {
 	return frame.Size.W - left.Size.W - right.Size.W, insets.Top, true
 }
 
-// menuBarHeight returns the height of the menu bar of the display with it.
-func menuBarHeight() float64 {
-	s := menuBarScreen()
+// menuBarHeight returns screen's menu bar height.
+func menuBarHeight(screen int) float64 {
+	s := menuBarScreen(screen)
 	if s == 0 {
 		return 0
 	}
@@ -81,26 +81,25 @@ func surfaceView(v objc.ID) objc.ID {
 	return 0
 }
 
-// pinToTop moves a window of w×h points to the top middle of the display
-// with the menu bar, over the menu bar, where AppKit would
-// not otherwise let a window go.
-func pinToTop(handle uintptr, w, h float64) {
-	screen := menuBarScreen()
-	if screen == 0 {
+// pinToTop moves a window of w×h points to screen's top middle, over its
+// menu bar, where AppKit would not otherwise let it go.
+func pinToTop(handle uintptr, screen int, w, h float64) {
+	s := menuBarScreen(screen)
+	if s == 0 {
 		return
 	}
-	f := objc.Send[nsRect](screen, objc.RegisterName("frame"))
+	f := objc.Send[nsRect](s, objc.RegisterName("frame"))
 	r := nsRect{nsPoint{f.Origin.X + (f.Size.W-w)/2, f.Origin.Y + f.Size.H - h}, nsSize{w, h}}
 	objc.ID(handle).Send(objc.RegisterName("setFrame:display:"), r, true)
 }
 
-// menuBarScreen returns the screen with the menu bar: the first.
-func menuBarScreen() objc.ID {
+// menuBarScreen returns a screen by its MyGo display index.
+func menuBarScreen(index int) objc.ID {
 	screens := objc.ID(objc.GetClass("NSScreen")).Send(objc.RegisterName("screens"))
-	if objc.Send[uint](screens, objc.RegisterName("count")) == 0 {
+	if index < 0 || uint(index) >= objc.Send[uint](screens, objc.RegisterName("count")) {
 		return 0
 	}
-	return screens.Send(objc.RegisterName("objectAtIndex:"), uint(0))
+	return screens.Send(objc.RegisterName("objectAtIndex:"), uint(index))
 }
 
 // windowFrame returns a window's frame, for checking where it went.
@@ -109,14 +108,24 @@ func windowFrame(handle uintptr) (x, y, w, h float64) {
 	return f.Origin.X, f.Origin.Y, f.Size.W, f.Size.H
 }
 
-// watchPointer calls fn on the main thread as the pointer moves, over this
-// app's windows or another's, until stop is called.
-func watchPointer(fn func()) (stop func(), ok bool) {
-	// mouse moved, and left, right and other mouse dragged
-	const mask = uint64(1<<5 | 1<<6 | 1<<7 | 1<<27)
+// watchPointer follows pointer movement and primary presses over this app's
+// windows or another's, until stop is called.
+func watchPointer(move, down, up func()) (stop func(), ok bool) {
+	// left down, left up, mouse moved, and left, right and other mouse dragged
+	const mask = uint64(1<<1 | 1<<2 | 1<<5 | 1<<6 | 1<<7 | 1<<27)
 	events := objc.ID(objc.GetClass("NSEvent"))
-	global := objc.NewBlock(func(_ objc.Block, _ objc.ID) { fn() })
-	local := objc.NewBlock(func(_ objc.Block, ev objc.ID) objc.ID { fn(); return ev })
+	notify := func(ev objc.ID) {
+		switch objc.Send[uint](ev, objc.RegisterName("type")) {
+		case 1:
+			down()
+		case 2:
+			up()
+		default:
+			move()
+		}
+	}
+	global := objc.NewBlock(func(_ objc.Block, ev objc.ID) { notify(ev) })
+	local := objc.NewBlock(func(_ objc.Block, ev objc.ID) objc.ID { notify(ev); return ev })
 	g := events.Send(objc.RegisterName("addGlobalMonitorForEventsMatchingMask:handler:"), mask, global)
 	l := events.Send(objc.RegisterName("addLocalMonitorForEventsMatchingMask:handler:"), mask, local)
 	g.Send(objc.RegisterName("retain"))
