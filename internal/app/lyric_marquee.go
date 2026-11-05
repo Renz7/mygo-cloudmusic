@@ -1,7 +1,6 @@
 package app
 
 import (
-	"math"
 	"strings"
 	"time"
 )
@@ -10,11 +9,11 @@ const (
 	lyricMarqueeDelay = time.Second
 	lyricMarqueeStep  = 150 * time.Millisecond
 	lyricMarqueeSpeed = 30
-	lyricMarqueeGap   = 24
 )
 
-// lyricMarquee keeps a looping lyric's position. Its units are points in the
-// notch and runes in the menu bar.
+// lyricMarquee keeps a scrolling lyric's position. Its units are points in the
+// notch and runes in the menu bar. Overflowing lyrics scroll once to their
+// end, then stop until the line changes.
 type lyricMarquee struct {
 	text     string
 	overflow bool
@@ -26,9 +25,9 @@ type lyricMarquee struct {
 
 func (m *lyricMarquee) reset() { *m = lyricMarquee{} }
 
-// step moves an overflowing lyric while it plays. It returns the next timer
-// deadline during the initial pause, or the normal refresh interval while
-// moving.
+// step moves an overflowing lyric while it plays, up to distance. It returns
+// the next timer deadline during the initial pause, or the normal refresh
+// interval while moving; once the end is reached it stays put.
 func (m *lyricMarquee) step(now time.Time, text string, overflow, playing bool, distance, speed float32) (offset float32, after time.Duration, moving bool) {
 	if text != m.text || overflow != m.overflow {
 		m.text, m.overflow = text, overflow
@@ -43,6 +42,10 @@ func (m *lyricMarquee) step(now time.Time, text string, overflow, playing bool, 
 	}
 	if !playing {
 		m.last, m.paused = now, true
+		return m.offset, 0, false
+	}
+	if m.offset >= distance {
+		m.offset = distance
 		return m.offset, 0, false
 	}
 	if m.paused {
@@ -65,23 +68,29 @@ func (m *lyricMarquee) step(now time.Time, text string, overflow, playing bool, 
 		elapsed -= m.delay
 		m.delay = 0
 	}
-	m.offset = float32(math.Mod(float64(m.offset)+elapsed.Seconds()*float64(speed), float64(distance)))
+	m.offset += float32(elapsed.Seconds() * float64(speed))
+	if m.offset >= distance {
+		m.offset = distance
+		return m.offset, 0, false
+	}
 	return m.offset, lyricMarqueeStep, true
 }
 
-// menuBarLyricTitle returns a fixed-rune title that loops a long lyric with
-// a small visual gap.
+// menuBarLyricTitle returns a fixed-rune title that scrolls a long lyric once
+// to its end.
 func (m *lyricMarquee) menuBarLyricTitle(now time.Time, text string, playing bool) (string, time.Duration) {
 	runes := []rune(text)
 	overflow := len(runes) > menuBarLyricRunes
-	offset, after, _ := m.step(now, text, overflow, playing, float32(len(runes)+4), 6)
+	var max float32
+	if overflow {
+		max = float32(len(runes) - menuBarLyricRunes)
+	}
+	offset, after, _ := m.step(now, text, overflow, playing, max, 6)
 	if !overflow {
 		return padMenuBarLyric(runes), after
 	}
-	all := append(append([]rune{}, runes...), []rune(strings.Repeat("\u2007", 4))...)
-	all = append(all, all...)
-	start := int(offset)
-	return string(all[start : start+menuBarLyricRunes]), after
+	start := min(int(offset), len(runes)-menuBarLyricRunes)
+	return string(runes[start : start+menuBarLyricRunes]), after
 }
 
 func padMenuBarLyric(runes []rune) string {

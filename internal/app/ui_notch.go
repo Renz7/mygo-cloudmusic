@@ -2,6 +2,7 @@ package app
 
 import (
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -574,24 +575,24 @@ func (n *notch) compactLyricWidth() float32 {
 }
 
 func (n *notch) lyricMarquee(c *ui.Context, marquee *lyricMarquee, lyric string, width, size float32, color ui.Color) {
-	textWidth, _ := c.MeasureText(0, ui.Span{Text: lyric, Size: size, Weight: 600})
+	lyric = strings.Join(strings.Fields(lyric), " ")
+	textWidth, textHeight := c.MeasureText(0, ui.Span{Text: lyric, Size: size, Weight: 600})
 	overflow := textWidth > width
-	offset, after, moving := marquee.step(c.Now(), lyric, overflow, n.a.pl.Playing(), textWidth+lyricMarqueeGap, lyricMarqueeSpeed)
+	offset, after, moving := marquee.step(c.Now(), lyric, overflow, n.a.pl.Playing(), textWidth-width, lyricMarqueeSpeed)
 	if after > 0 {
 		c.After(after)
 	}
 	if moving {
 		c.AnimationFrame()
 	}
-	viewport := ui.Box(c).Width(width).ClipX()
+	viewport := ui.Box(c).Size(width, textHeight).Clip()
 	viewport.Children(func() {
 		if !overflow {
 			ui.Text(c, lyric).Width(width).FontSize(size).FontWeight(600).TextColor(color).TextAlign(ui.Center).SingleLine()
 			return
 		}
-		ui.Row(c).Gap(lyricMarqueeGap).Translate(-offset, 0).Children(func() {
-			ui.Text(c, lyric).FontSize(size).FontWeight(600).TextColor(color).SingleLine()
-			ui.Text(c, lyric).FontSize(size).FontWeight(600).TextColor(color).SingleLine()
+		ui.Row(c).Translate(-offset, 0).Children(func() {
+			ui.Text(c, lyric).FontSize(size).FontWeight(600).TextColor(color).NoWrap()
 		})
 	})
 }
